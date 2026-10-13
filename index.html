@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Väder</title>
+<style>
+:root {
+  --bg: #f5f5f7;
+  --fg: #1d1d1f;
+  --muted: #6e6e73;
+  --card: #ffffff;
+  --line: #e5e5ea;
+  --accent: #0a6cff;
+  --error: #d70015;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #000000;
+    --fg: #f5f5f7;
+    --muted: #98989f;
+    --card: #1c1c1e;
+    --line: #38383a;
+    --accent: #0a84ff;
+    --error: #ff453a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #000000;
+  --fg: #f5f5f7;
+  --muted: #98989f;
+  --card: #1c1c1e;
+  --line: #38383a;
+  --accent: #0a84ff;
+  --error: #ff453a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.wrap { max-width: 480px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 24px; margin: 8px 0 16px; }
+h2 { font-size: 16px; margin: 0; }
+form { display: flex; gap: 8px; }
+input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 16px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--fg);
+}
+button {
+  font: inherit;
+  font-size: 16px;
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #ffffff;
+  cursor: pointer;
+}
+.card { background: var(--card); border-radius: 16px; padding: 16px; margin-top: 16px; }
+.place { font-size: 17px; font-weight: 600; margin: 0; }
+.now { font-size: 56px; font-weight: 600; margin: 8px 0 0; line-height: 1; }
+.muted { color: var(--muted); font-size: 14px; margin: 4px 0 0; }
+.status { margin: 16px 4px 0; color: var(--muted); }
+.status.error { color: var(--error); }
+ul { list-style: none; margin: 12px 0 0; padding: 0; }
+li {
+  display: grid;
+  grid-template-columns: 96px 1fr auto;
+  gap: 8px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  align-items: start;
+}
+li:first-child { border-top: 0; }
+.day { font-weight: 600; }
+.temps { text-align: right; white-space: nowrap; }
+.small { display: block; font-size: 13px; color: var(--muted); }
+.footer { margin: 24px 0 0; font-size: 12px; color: var(--muted); text-align: center; }
+[hidden] { display: none !important; }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <h1>Väder</h1>
+
+  <form id="search" role="search">
+    <label for="place" class="sr-only">Ort</label>
+    <input id="place" type="search" placeholder="Sök ort, till exempel Göteborg" autocomplete="off" enterkeyhint="search" required>
+    <button type="submit">Sök</button>
+  </form>
+
+  <p id="status" class="status" role="status" aria-live="polite">Hämtar väder...</p>
+
+  <section id="result" hidden>
+    <div class="card">
+      <p class="place" id="placeName"></p>
+      <p class="muted" id="updated"></p>
+      <p class="now" id="temp"></p>
+      <p class="place" id="nowText"></p>
+      <p class="muted" id="wind"></p>
+    </div>
+
+    <div class="card">
+      <h2>Kommande 7 dagar</h2>
+      <ul id="days"></ul>
+    </div>
+  </section>
+
+  <p class="footer">Väderdata från Open-Meteo.com</p>
+</main>
+
+<script>
+const DEFAULT_PLACE = { name: 'Göteborg', country: 'Sverige', latitude: 57.7089, longitude: 11.9746 };
+
+const WEATHER_TEXT = {
+  0: 'Klart',
+  1: 'Mest klart',
+  2: 'Delvis molnigt',
+  3: 'Mulet',
+  45: 'Dimma',
+  48: 'Rimdimma',
+  51: 'Lätt duggregn',
+  53: 'Duggregn',
+  55: 'Kraftigt duggregn',
+  56: 'Lätt underkylt duggregn',
+  57: 'Kraftigt underkylt duggregn',
+  61: 'Lätt regn',
+  63: 'Regn',
+  65: 'Kraftigt regn',
+  66: 'Lätt underkylt regn',
+  67: 'Kraftigt underkylt regn',
+  71: 'Lätt snöfall',
+  73: 'Snöfall',
+  75: 'Kraftigt snöfall',
+  77: 'Snökorn',
+  80: 'Lätta regnskurar',
+  81: 'Regnskurar',
+  82: 'Kraftiga regnskurar',
+  85: 'Lätta snöbyar',
+  86: 'Kraftiga snöbyar',
+  95: 'Åska',
+  96: 'Åska med hagel',
+  99: 'Kraftig åska med hagel'
+};
+
+const statusEl = document.getElementById('status');
+const resultEl = document.getElementById('result');
+
+function setStatus(text, isError = false) {
+  statusEl.textContent = text;
+  statusEl.classList.toggle('error', isError);
+  statusEl.hidden = !text;
+}
+
+async function getJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
+}
+
+async function findPlace(query) {
+  const params = new URLSearchParams({ name: query, count: '1', language: 'sv', format: 'json' });
+  const data = await getJson(`https://geocoding-api.open-meteo.com/v1/search?${params}`);
+  return data.results ? data.results[0] : null;
+}
+
+async function loadForecast(place) {
+  const params = new URLSearchParams({
+    latitude: String(place.latitude),
+    longitude: String(place.longitude),
+    current: 'temperature_2m,weather_code,wind_speed_10m',
+    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum',
+    timezone: 'auto',
+    forecast_days: '7',
+    wind_speed_unit: 'ms'
+  });
+  return getJson(`https://api.open-meteo.com/v1/forecast?${params}`);
+}
+
+function weatherText(code) {
+  return WEATHER_TEXT[code] ?? 'Okänt väder';
+}
+
+function formatDay(isoDate) {
+  const [year, month, day] = isoDate.split('-').map(Number);
+  return new Intl.DateTimeFormat('sv-SE', { weekday: 'short', day: 'numeric', month: 'short' })
+    .format(new Date(year, month - 1, day));
+}
+
+function round1(value) {
+  return Math.round(value * 10) / 10;
+}
+
+function render(place, data) {
+  const { current, current_units: units, daily, daily_units: dailyUnits } = data;
+  const precipitationUnit = dailyUnits?.precipitation_sum ?? 'mm';
+
+  document.getElementById('placeName').textContent = place.country ? `${place.name}, ${place.country}` : place.name;
+  document.getElementById('updated').textContent = `Uppdaterad ${current.time.slice(11, 16)}`;
+  document.getElementById('temp').textContent = `${Math.round(current.temperature_2m)}°C`;
+  document.getElementById('nowText').textContent = weatherText(current.weather_code);
+  document.getElementById('wind').textContent = `Vind ${round1(current.wind_speed_10m)} ${units.wind_speed_10m}`;
+
+  const list = document.getElementById('days');
+  list.replaceChildren();
+  daily.time.forEach((date, i) => {
+    const li = document.createElement('li');
+
+    const day = document.createElement('span');
+    day.className = 'day';
+    day.textContent = formatDay(date);
+
+    const middle = document.createElement('span');
+    middle.textContent = weatherText(daily.weather_code[i]);
+    const rain = document.createElement('span');
+    rain.className = 'small';
+    rain.textContent = `Nederbörd ${round1(daily.precipitation_sum[i])} ${precipitationUnit}`;
+    middle.appendChild(rain);
+
+    const temps = document.createElement('span');
+    temps.className = 'temps';
+    temps.textContent = `${Math.round(daily.temperature_2m_max[i])}° / ${Math.round(daily.temperature_2m_min[i])}°`;
+
+    li.append(day, middle, temps);
+    list.appendChild(li);
+  });
+
+  resultEl.hidden = false;
+}
+
+async function show(place) {
+  setStatus('Hämtar väder...');
+  try {
+    const data = await loadForecast(place);
+    render(place, data);
+    setStatus('');
+  } catch (error) {
+    resultEl.hidden = true;
+    setStatus('Kunde inte hämta vädret. Kontrollera anslutningen och försök igen.', true);
+    console.error(error);
+  }
+}
+
+document.getElementById('search').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const query = document.getElementById('place').value.trim();
+  if (!query) return;
+
+  resultEl.hidden = true;
+  setStatus('Söker plats...');
+  try {
+    const found = await findPlace(query);
+    if (!found) {
+      setStatus('Hittade ingen plats med det namnet.', true);
+      return;
+    }
+    await show(found);
+  } catch (error) {
+    setStatus('Kunde inte söka efter platsen. Kontrollera anslutningen och försök igen.', true);
+    console.error(error);
+  }
+});
+
+show(DEFAULT_PLACE);
+</script>
+</body>
+</html>
